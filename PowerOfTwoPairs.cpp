@@ -3,6 +3,7 @@
 #include <vector>
 #include <map>
 #include <set>
+#include <unordered_set>
 #include <algorithm>
 #include <chrono>
 #include <thread>
@@ -79,16 +80,80 @@ struct power_triplet_t
 	auto operator<=>(const power_triplet_t&) const = default;
 };
 
+// Measure elapsed time in seconds.
+struct duration_t
+{
+	const chrono::steady_clock::time_point start_time;
+
+	duration_t() : start_time(chrono::steady_clock::now()) {}
+
+	chrono::seconds elapsed() const
+	{
+		const auto end_time = chrono::steady_clock::now();
+		return chrono::duration_cast<chrono::seconds>(end_time - start_time);
+	}
+};
+
+
 // Set of powers of two, for quick check that a sum is such a power.
 set<my_int_t> gen_powers_of_two()
 {
 	set<my_int_t> p2;
-	for (my_int_t pow = 0; pow < 20; ++pow)
+	for (my_int_t pow = 0; pow < 10; ++pow)
 		p2.insert(my_int_t(1) << pow);
 	return p2;
 }
 
-set<my_int_t> powers_of_two = gen_powers_of_two();
+const set<my_int_t> powers_of_two = gen_powers_of_two();
+
+// Generate triplets of numbers all pair-wise summing to powers of two.
+vector<power_triplet_t> generate_power_triplets(const size_t triplet_count)
+{
+	duration_t duration;
+
+	set<power_triplet_t> triplet_set;
+
+	my_int_t delta = 0;
+	while (triplet_set.size() < triplet_count)
+	{
+		delta += 1;
+		for (my_int_t p2 : powers_of_two)
+		{
+			my_int_t deltas[] = { delta, -delta };
+			for (my_int_t delta : deltas)
+			{
+				const my_int_t i = delta;
+				const my_int_t j = p2 - i;
+				if (i == j)
+					continue;
+
+				for (my_int_t k = -delta; k <= delta; ++k)
+				{
+					if (k == 0 || k == i || k == j)
+						continue;
+
+					if (powers_of_two.count(i + k) && powers_of_two.count(j + k))
+					{
+						triplet_set.emplace(i, j, k);
+					}
+				}
+			}
+		}
+	}
+
+	vector<power_triplet_t> triplets;
+	for (const auto& tri : triplet_set)
+		triplets.push_back(tri);
+
+	rotate(triplets.begin(), triplets.begin() + triplets.size() * 3 / 5, triplets.end());
+
+	std::cout << triplets.size() << " triplets in " << duration.elapsed() << "." << endl;
+
+	//for (const auto& tri : triplets)
+	//	std::cout << tri.a << " " << tri.b << " " << tri.c << endl;
+
+	return triplets;
+}
 
 // A set of N numbers (N equal to desired_size) that have many
 // pair-wise sums equal to powers of two.
@@ -101,9 +166,12 @@ set<my_int_t> powers_of_two = gen_powers_of_two();
 struct number_set_t
 {
 	size_t desired_size;
-	set<my_int_t> numbers;
+	size_t improvement_count = 0;
+	unordered_set<my_int_t> numbers;
 
 	number_set_t(size_t size) : desired_size(size) {}
+
+	void reset() { improvement_count = 0; numbers.clear(); }
 
 	bool is_filled() const { return desired_size == numbers.size(); }
 
@@ -115,6 +183,111 @@ struct number_set_t
 			numbers.insert(tri.b);
 		if (!is_filled())
 			numbers.insert(tri.c);
+	}
+
+	void simplify()
+	{
+		while (std::all_of(numbers.begin(), numbers.end(), [](my_int_t number) { return (number % 2) == 0; }))
+		{
+			unordered_set<my_int_t> new_numbers;
+			for (const my_int_t number : numbers)
+				new_numbers.insert(number / my_int_t(2));
+			new_numbers.swap(numbers);
+		}
+	}
+
+	void improve()
+	{
+		while (improve_once())
+		{
+			improvement_count += 1;
+		}
+	}
+
+	bool improve_once()
+	{
+		const set<power_pair_t> current_pairs = pairs();
+		map<my_int_t, size_t> pair_count_per_numbers;
+
+		for (const power_pair_t& pair : current_pairs)
+		{
+			pair_count_per_numbers[pair.a] += 1;
+			pair_count_per_numbers[pair.b] += 1;
+		}
+
+		vector<my_int_t> worst_numbers;
+		size_t worst_pair_count = 1000000;
+		for (const auto& [number, count] : pair_count_per_numbers)
+		{
+			if (count < worst_pair_count)
+			{
+				worst_numbers.resize(0);
+				worst_numbers.push_back(number);
+				worst_pair_count = count;
+			}
+			else if (count == worst_pair_count)
+			{
+				worst_numbers.push_back(number);
+			}
+		}
+
+		for (const my_int_t power : powers_of_two)
+		{
+			for (const my_int_t number : numbers)
+			{
+				const my_int_t maybe_number = power - number;
+				if (numbers.contains(maybe_number))
+					continue;
+
+				for (const my_int_t worst_number : worst_numbers)
+				{
+					size_t maybe_pair_count = 0;
+					for (const my_int_t number : numbers)
+						if (number != worst_number && powers_of_two.contains(number + maybe_number))
+							maybe_pair_count += 1;
+
+					if (maybe_pair_count > worst_pair_count)
+					{
+						numbers.erase(worst_number);
+						numbers.insert(maybe_number);
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	}
+
+	bool slower_improve_once()
+	{
+		const set<power_pair_t> current_pairs = pairs();
+		number_set_t maybe_set(*this);
+		for (const my_int_t number : numbers)
+		{
+			for (const my_int_t power : powers_of_two)
+			{
+				const my_int_t maybe_number = power - number;
+				if (numbers.contains(maybe_number))
+					continue;
+
+				for (const my_int_t replaced_number : numbers)
+				{
+					if (replaced_number == number)
+						continue;
+					maybe_set.numbers.erase(replaced_number);
+					maybe_set.numbers.insert(maybe_number);
+					const auto maybe_pairs = maybe_set.pairs();
+					if (maybe_pairs.size() > current_pairs.size())
+					{
+						maybe_set.numbers.swap(numbers);
+						return true;
+					}
+					maybe_set.numbers.erase(maybe_number);
+					maybe_set.numbers.insert(replaced_number);
+				}
+			}
+		}
+		return false;
 	}
 
 	set<power_pair_t> pairs() const
@@ -137,19 +310,6 @@ struct number_set_t
 	}
 };
 
-struct duration_t
-{
-	const chrono::steady_clock::time_point start_time;
-
-	duration_t() : start_time(chrono::steady_clock::now()) {}
-
-	chrono::seconds elapsed() const
-	{
-		const auto end_time = chrono::steady_clock::now();
-		return chrono::duration_cast<chrono::seconds>(end_time - start_time);
-	}
-};
-
 // Generate a subset all combinations of triplets (i.e N choose K)
 // and keep the best resulting combination.
 // Hold its own state so that multiple can run in parallel in multiple
@@ -158,30 +318,43 @@ struct combiner_t
 {
 	const vector<power_triplet_t>& triplets;
 	const size_t number_set_size;
-	const size_t first_indice;
+	vector<size_t> preset_indices;
 	number_set_t best_number_set;
 	set<power_pair_t> best_number_set_pairs;
+	size_t combination_count = 0;
 
-	combiner_t(const vector<power_triplet_t>& tris, size_t set_size, size_t first)
+	combiner_t(const vector<power_triplet_t>& tris, size_t set_size, vector<size_t> preset)
 		: triplets(tris)
 		, number_set_size(set_size)
-		, first_indice(first)
+		, preset_indices(preset)
 		, best_number_set(set_size)
 	{}
 
-	void run()
+	void combine()
 	{
+		if (number_set_size <= 0)
+			return;
+
 		// These are the indices of the triplets to combine.
 		vector<size_t> indices;
-		for (size_t i = 0; i < number_set_size; ++i)
-			indices.push_back(i + first_indice);
+		if (preset_indices.size() > 0)
+			for (size_t preset : preset_indices)
+				indices.push_back(preset);
+		else
+			indices.push_back(0);
+		for (size_t i = indices.size(); i < number_set_size; ++i)
+			indices.push_back(indices[i-1]+1);
 
 		bool more_combinations = true;
+		number_set_t number_set(number_set_size);
 		while (more_combinations)
 		{
-			number_set_t number_set(number_set_size);
+			combination_count++;
+			number_set.reset();
 			for (size_t i : indices)
 				number_set.add(triplets[i]);
+
+			number_set.improve();
 
 			const auto number_set_pairs = number_set.pairs();
 			if (number_set_pairs.size() > best_number_set_pairs.size())
@@ -194,9 +367,9 @@ struct combiner_t
 			// This is equal to N! / (K! x (N-K)!). Here N is the number of triplets we found
 			// and K is the desired size of the set of numbers.
 			more_combinations = false;
-			for (size_t which_indice = indices.size() - 1; which_indice > 0; which_indice--)
+			for (size_t which_indice = indices.size() - 1; which_indice != preset_indices.size() - 1; which_indice--)
 			{
-				if (indices[which_indice] + 1 < triplets.size() - (indices.size() - which_indice - 1))
+				if (indices[which_indice] + 1 < triplets.size() - (number_set_size - which_indice - 1))
 				{
 					indices[which_indice] += 1;
 					for (size_t reset_indice = which_indice + 1; reset_indice < indices.size(); reset_indice++)
@@ -211,6 +384,46 @@ struct combiner_t
 	}
 };
 
+vector<combiner_t> generate_combiners(const vector<power_triplet_t>& triplets, const size_t number_set_size, size_t levels)
+{
+	vector<combiner_t> combiners;
+
+	levels = std::min(levels, number_set_size);
+
+	if (levels <= 0)
+	{
+		combiners.push_back(combiner_t(triplets, number_set_size, {}));
+		return combiners;
+	}
+
+	vector<size_t> preset_indices;
+	for (size_t i = 0; i < levels; ++i)
+		preset_indices.push_back(i);
+
+	bool more_combinations = true;
+	while (more_combinations)
+	{
+		combiners.push_back(combiner_t(triplets, number_set_size, preset_indices));
+
+		more_combinations = false;
+		for (size_t which_indice = preset_indices.size() - 1; which_indice != size_t(-1); which_indice--)
+		{
+			if (preset_indices[which_indice] + 1 < triplets.size() - (number_set_size - which_indice - 1))
+			{
+				preset_indices[which_indice] += 1;
+				for (size_t reset_indice = which_indice + 1; reset_indice < preset_indices.size(); reset_indice++)
+				{
+					preset_indices[reset_indice] = preset_indices[reset_indice - 1] + 1;
+				}
+				more_combinations = true;
+				break;
+			}
+		}
+	}
+
+	return combiners;
+}
+
 // Run the combiners in multiple threads and return the best result.
 number_set_t run_combiners_in_threads(vector<combiner_t>& combiners)
 {
@@ -220,7 +433,8 @@ number_set_t run_combiners_in_threads(vector<combiner_t>& combiners)
 	atomic<size_t> next_to_do = 0;
 	vector<thread*> threads;
 
-	for (size_t i = 0; i < thread::hardware_concurrency(); ++i)
+	// Search number sets.
+	for (size_t i = 0; i < thread::hardware_concurrency() - 1; ++i)
 	{
 		threads.push_back(new thread([&combiners, &next_to_do]()
 			{
@@ -230,12 +444,44 @@ number_set_t run_combiners_in_threads(vector<combiner_t>& combiners)
 					if (which >= combiners.size())
 						break;
 					combiner_t& combiner = combiners[which];
-					combiner.run();
+					combiner.combine();
 				}
 			}));
 	}
 
-	for (size_t i = 0; i < thread::hardware_concurrency(); ++i)
+	// Show progression of search.
+	threads.push_back(new thread([&combiners, &next_to_do]()
+		{
+			size_t current_percent = 0;
+			duration_t duration;
+
+			auto print_progress = [&duration](size_t percent)
+			{
+				std::cout << setw(3) << percent << "% " << setw(5) << duration.elapsed() << "\r";
+			};
+
+			while (true)
+			{
+				this_thread::sleep_for(chrono::milliseconds(100));
+				const size_t which = next_to_do.load();
+				if (which >= combiners.size())
+				{
+					current_percent = 100;
+					break;
+				}
+				const size_t percent = 100 * which / combiners.size();
+				if (percent == current_percent)
+					continue;
+				current_percent = percent;
+				print_progress(percent);
+				std::cout.flush();
+			}
+			print_progress(100);
+			cout << endl;
+		}));
+
+	// For for it all to end.
+	for (size_t i = 0; i < threads.size(); ++i)
 	{
 		threads[i]->join();
 	}
@@ -251,79 +497,49 @@ number_set_t run_combiners_in_threads(vector<combiner_t>& combiners)
 		}
 	}
 
+	best_number_set.simplify();
 	return best_number_set;
-}
-
-// Generate triplets of numbers all pair-wise summing to powers of two.
-vector<power_triplet_t> generate_power_triplets(const my_int_t delta_bound)
-{
-	duration_t duration;
-
-	set<power_triplet_t> triplet_set;
-
-	for (my_int_t p2 : powers_of_two)
-	{
-		for (my_int_t delta = -delta_bound; delta <= delta_bound; ++delta)
-		{
-			if (delta == 0)
-				continue;
-
-			const my_int_t i = delta;
-			const my_int_t j = p2 - i;
-			if (i == j)
-				continue;
-
-			for (my_int_t k = -delta_bound; k < delta_bound; ++k)
-			{
-				if (k == 0 || k == i || k == j)
-					continue;
-
-				if (powers_of_two.count(i + k) && powers_of_two.count(j + k))
-				{
-					triplet_set.emplace(i, j, k);
-				}
-			}
-		}
-	}
-
-	vector<power_triplet_t> triplets;
-	for (const auto& tri : triplet_set)
-		triplets.push_back(tri);
-
-	std::cout << triplets.size() << " triplets in " << duration.elapsed() << "." << endl;
-
-	//for (const auto& tri : triplets)
-	//	std::cout << tri.a << " " << tri.b << " " << tri.c << endl;
-
-	return triplets;
 }
 
 
 // Actual algorithm to find good number sets.
-int main()
+int main(int argc, char** argv)
 {
+	if (argc < 4)
+	{
+		cerr << "Missing arguments." << endl;
+		cerr << "Usage: " << (argc >= 1 ? argv[0] : "PowerOfTwoPairs") << " delta cobiner-level min-set-size max-set-size" << endl;
+		return 1;
+	}
+
+	const size_t triplet_count = std::atoi(argv[1]);
+	const size_t combiner_levels = std::atoi(argv[2]);
+	const size_t min_set_size = std::atoi(argv[3]);
+	const size_t max_set_size = argc > 4 ? std::atoi(argv[4]) : min_set_size;
+
 	// Generate triplets of numbers all pair-wise summing to powers of two.
-	vector<power_triplet_t> triplets = generate_power_triplets(100);
+	vector<power_triplet_t> triplets = generate_power_triplets(triplet_count);
 
 	// Generate all combinations of 10 triplets and keep the
 	// combination that has the most pair-wise sums of powers
 	// of two.
-	for (size_t number_set_size = 5; number_set_size <= 10; ++number_set_size)
+	for (size_t number_set_size = min_set_size; number_set_size <= max_set_size; ++number_set_size)
 	{
 		duration_t duration;
 
-		vector<combiner_t> combiners;
-		const size_t first_indice_max = triplets.size() - number_set_size;
-		for (size_t first_indice = 0; first_indice <= first_indice_max; ++first_indice)
-		{
-			combiners.push_back(combiner_t(triplets, number_set_size, first_indice));
-		}
+		vector<combiner_t> combiners = generate_combiners(triplets, number_set_size, combiner_levels);
+		std::cout << "Using " << combiners.size() << " combiners." << endl;
 
 		const number_set_t best_number_set = run_combiners_in_threads(combiners);
 		const set<power_pair_t> best_number_set_pairs = best_number_set.pairs();
 
+		size_t total_combination_count = 0;
+		for (const auto& combiner : combiners)
+			total_combination_count += combiner.combination_count;
+
+		std::cout << "Tried " << total_combination_count << " combinations with " << best_number_set.improvement_count << " improvements." << endl;
 		std::cout << number_set_size << " numbers in " << duration.elapsed() << ":";
-		for (const my_int_t number : best_number_set.numbers)
+		for (const my_int_t number : set<my_int_t>(best_number_set.numbers.begin(), best_number_set.numbers.end()))
 			std::cout << " " << number;
 		std::cout << endl;
 
