@@ -175,14 +175,16 @@ struct number_set_t
 
 	bool is_filled() const { return desired_size == numbers.size(); }
 
-	void add(const power_triplet_t& tri)
+	void add(const my_int_t number)
 	{
 		if (!is_filled())
-			numbers.insert(tri.a);
-		if (!is_filled())
-			numbers.insert(tri.b);
-		if (!is_filled())
-			numbers.insert(tri.c);
+			numbers.insert(number);
+	}
+	void add(const power_triplet_t& tri)
+	{
+		add(tri.a);
+		add(tri.b);
+		add(tri.c);
 	}
 
 	void simplify()
@@ -500,53 +502,86 @@ number_set_t run_combiners_in_threads(vector<combiner_t>& combiners)
 	best_number_set.simplify();
 	return best_number_set;
 }
+number_set_t simple_algo(size_t number_set_size)
+{
+	number_set_t best_number_set(number_set_size);
+	for (my_int_t min_delta_for_negative = 0; min_delta_for_negative < 20; min_delta_for_negative += 2)
+	{
+		number_set_t number_set(number_set_size);
+		for (my_int_t delta = 1; !number_set.is_filled(); delta += 2)
+		{
+			number_set.add(delta);
+			if (delta > min_delta_for_negative)
+				number_set.add(-delta + 2);
+		}
+		if (number_set.pairs().size() > best_number_set.pairs().size())
+			best_number_set = number_set;
+	}
+	return best_number_set;
+}
 
+void print_result(const duration_t& duration, const number_set_t& number_set)
+{
+	std::cout << number_set.desired_size << " numbers in " << duration.elapsed() << ":";
+	for (const my_int_t number : set<my_int_t>(number_set.numbers.begin(), number_set.numbers.end()))
+		std::cout << " " << number;
+	std::cout << endl;
+
+	const set<power_pair_t> pairs = number_set.pairs();
+	std::cout << pairs.size() << " powers pairs:";
+	for (const auto& pair : pairs)
+		std::cout << " " << pair.a << "+" << pair.b << "=" << pair.sum();
+	std::cout << endl;
+}
 
 // Actual algorithm to find good number sets.
 int main(int argc, char** argv)
 {
-	if (argc < 4)
+	if (argc < 4 && argc != 2)
 	{
 		cerr << "Missing arguments." << endl;
-		cerr << "Usage: " << (argc >= 1 ? argv[0] : "PowerOfTwoPairs") << " delta cobiner-level min-set-size max-set-size" << endl;
+		cerr << "Searching  Algo Usage: " << (argc >= 1 ? argv[0] : "PowerOfTwoPairs") << " delta combiner-level min-set-size max-set-size" << endl;
+		cerr << "Simplified Algo Usage: " << (argc >= 1 ? argv[0] : "PowerOfTwoPairs") << " set-size" << endl;
 		return 1;
 	}
 
-	const size_t triplet_count = std::atoi(argv[1]);
-	const size_t combiner_levels = std::atoi(argv[2]);
-	const size_t min_set_size = std::atoi(argv[3]);
-	const size_t max_set_size = argc > 4 ? std::atoi(argv[4]) : min_set_size;
+	const bool use_simplifed_algo = argc == 2;
+	const bool simple_range = argc <= 4;
+	const size_t triplet_count = use_simplifed_algo ? 0 : std::atoi(argv[1]);
+	const size_t combiner_levels = use_simplifed_algo ? 0 : std::atoi(argv[2]);
+	const size_t min_set_size = use_simplifed_algo ? std::atoi(argv[1]) : std::atoi(argv[3]);
+	const size_t max_set_size = simple_range ? min_set_size : std::atoi(argv[4]);
 
-	// Generate triplets of numbers all pair-wise summing to powers of two.
-	vector<power_triplet_t> triplets = generate_power_triplets(triplet_count);
-
-	// Generate all combinations of 10 triplets and keep the
-	// combination that has the most pair-wise sums of powers
-	// of two.
-	for (size_t number_set_size = min_set_size; number_set_size <= max_set_size; ++number_set_size)
+	if (use_simplifed_algo)
 	{
 		duration_t duration;
+		print_result(duration, simple_algo(min_set_size));
+	}
+	else
+	{
+		// Generate triplets of numbers all pair-wise summing to powers of two.
+		vector<power_triplet_t> triplets = generate_power_triplets(triplet_count);
 
-		vector<combiner_t> combiners = generate_combiners(triplets, number_set_size, combiner_levels);
-		std::cout << "Using " << combiners.size() << " combiners." << endl;
+		// Generate all combinations of 10 triplets and keep the
+		// combination that has the most pair-wise sums of powers
+		// of two.
+		for (size_t number_set_size = min_set_size; number_set_size <= max_set_size; ++number_set_size)
+		{
+			duration_t duration;
 
-		const number_set_t best_number_set = run_combiners_in_threads(combiners);
-		const set<power_pair_t> best_number_set_pairs = best_number_set.pairs();
+			vector<combiner_t> combiners = generate_combiners(triplets, number_set_size, combiner_levels);
+			std::cout << "Using " << combiners.size() << " combiners." << endl;
 
-		size_t total_combination_count = 0;
-		for (const auto& combiner : combiners)
-			total_combination_count += combiner.combination_count;
+			const number_set_t number_set = run_combiners_in_threads(combiners);
 
-		std::cout << "Tried " << total_combination_count << " combinations with " << best_number_set.improvement_count << " improvements." << endl;
-		std::cout << number_set_size << " numbers in " << duration.elapsed() << ":";
-		for (const my_int_t number : set<my_int_t>(best_number_set.numbers.begin(), best_number_set.numbers.end()))
-			std::cout << " " << number;
-		std::cout << endl;
+			size_t total_combination_count = 0;
+			for (const auto& combiner : combiners)
+				total_combination_count += combiner.combination_count;
 
-		std::cout << best_number_set_pairs.size() << " powers pairs:";
-		for (const auto& pair : best_number_set_pairs)
-			std::cout << " " << pair.a << "+" << pair.b << "=" << pair.sum();
-		std::cout << endl;
+			std::cout << "Tried " << total_combination_count << " combinations with " << number_set.improvement_count << " improvements." << endl;
+
+			print_result(duration, number_set);
+		}
 	}
 
 
