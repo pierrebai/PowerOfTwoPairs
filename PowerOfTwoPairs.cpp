@@ -150,51 +150,160 @@ struct duration_t
 	}
 };
 
+// Generate a subset all combinations of triplets (i.e N choose K)
+// and keep the best resulting combination.
+// Hold its own state so that multiple can run in parallel in multiple
+
+struct combiner_t
+{
+	const vector<power_triplet_t>& triplets;
+	const size_t number_set_size;
+	const size_t first_indice;
+	number_set_t best_number_set;
+	set<power_pair_t> best_number_set_pairs;
+
+	combiner_t(const vector<power_triplet_t>& tris, size_t set_size, size_t first)
+		: triplets(tris)
+		, number_set_size(set_size)
+		, first_indice(first)
+		, best_number_set(set_size)
+	{}
+
+	void run()
+	{
+		// These are the indices of the triplets to combine.
+		vector<size_t> indices;
+		for (size_t i = 0; i < number_set_size; ++i)
+			indices.push_back(i + first_indice);
+
+		bool more_combinations = true;
+		while (more_combinations)
+		{
+			number_set_t number_set(number_set_size);
+			for (size_t i : indices)
+				number_set.add(triplets[i]);
+
+			const auto number_set_pairs = number_set.pairs();
+			if (number_set_pairs.size() > best_number_set_pairs.size())
+			{
+				best_number_set = number_set;
+				best_number_set_pairs = number_set_pairs;
+			}
+
+			// Generate the next set of indices of triplets. This is N choose K in maths.
+			// This is equal to N! / (K! x (N-K)!). Here N is the number of triplets we found
+			// and K is the desired size of the set of numbers.
+			more_combinations = false;
+			for (size_t which_indice = indices.size() - 1; which_indice > 0; which_indice--)
+			{
+				if (indices[which_indice] + 1 < triplets.size() - (indices.size() - which_indice - 1))
+				{
+					indices[which_indice] += 1;
+					for (size_t reset_indice = which_indice + 1; reset_indice < indices.size(); reset_indice++)
+					{
+						indices[reset_indice] = indices[reset_indice - 1] + 1;
+					}
+					more_combinations = true;
+					break;
+				}
+			}
+		}
+	}
+};
+
+// Run the combiners in multiple threads and return the best result.
+number_set_t run_combiners_in_threads(vector<combiner_t>& combiners)
+{
+	if (combiners.size() <= 0)
+		return number_set_t(0);
+
+	atomic<size_t> next_to_do = 0;
+	vector<thread*> threads;
+
+	for (size_t i = 0; i < thread::hardware_concurrency(); ++i)
+	{
+		threads.push_back(new thread([&combiners, &next_to_do]()
+			{
+				while (true)
+				{
+					const size_t which = next_to_do.fetch_add(1);
+					if (which >= combiners.size())
+						break;
+					combiner_t& combiner = combiners[which];
+					combiner.run();
+				}
+			}));
+	}
+
+	for (size_t i = 0; i < thread::hardware_concurrency(); ++i)
+	{
+		threads[i]->join();
+	}
+
+	number_set_t best_number_set(combiners[0].number_set_size);
+	set<power_pair_t> best_number_set_pairs;
+	for (const combiner_t& combiner : combiners)
+	{
+		if (combiner.best_number_set_pairs.size() > best_number_set_pairs.size())
+		{
+			best_number_set = combiner.best_number_set;
+			best_number_set_pairs = combiner.best_number_set_pairs;
+		}
+	}
+
+	return best_number_set;
+}
+
+// Generate triplets of numbers all pair-wise summing to powers of two.
+vector<power_triplet_t> generate_power_triplets(const my_int_t delta_bound)
+{
+	duration_t duration;
+
+	set<power_triplet_t> triplet_set;
+
+	for (my_int_t p2 : powers_of_two)
+	{
+		for (my_int_t delta = -delta_bound; delta <= delta_bound; ++delta)
+		{
+			if (delta == 0)
+				continue;
+
+			const my_int_t i = delta;
+			const my_int_t j = p2 - i;
+			if (i == j)
+				continue;
+
+			for (my_int_t k = -delta_bound; k < delta_bound; ++k)
+			{
+				if (k == 0 || k == i || k == j)
+					continue;
+
+				if (powers_of_two.count(i + k) && powers_of_two.count(j + k))
+				{
+					triplet_set.emplace(i, j, k);
+				}
+			}
+		}
+	}
+
+	vector<power_triplet_t> triplets;
+	for (const auto& tri : triplet_set)
+		triplets.push_back(tri);
+
+	std::cout << triplets.size() << " triplets in " << duration.elapsed() << "." << endl;
+
+	//for (const auto& tri : triplets)
+	//	std::cout << tri.a << " " << tri.b << " " << tri.c << endl;
+
+	return triplets;
+}
+
+
 // Actual algorithm to find good number sets.
 int main()
 {
 	// Generate triplets of numbers all pair-wise summing to powers of two.
-	vector<power_triplet_t> triplets;
-	{
-		duration_t duration;
-
-		set<power_triplet_t> triplet_set;
-
-		const my_int_t delta_bound = 200;
-
-		for (my_int_t p2 : powers_of_two)
-		{
-			for (my_int_t delta = -delta_bound; delta <= delta_bound; ++delta)
-			{
-				if (delta == 0)
-					continue;
-
-				const my_int_t i = delta;
-				const my_int_t j = p2 - i;
-				if (i == j)
-					continue;
-
-				for (my_int_t k = -delta_bound; k < delta_bound; ++k)
-				{
-					if (k == 0 || k == i || k == j)
-						continue;
-
-					if (powers_of_two.count(i + k) && powers_of_two.count(j + k))
-					{
-						triplet_set.emplace(i, j, k);
-					}
-				}
-			}
-		}
-
-		for (const auto& tri : triplet_set)
-			triplets.push_back(tri);
-
-		cout << triplets.size() << " triplets in " << duration.elapsed() << "." << endl;
-
-		//for (const auto& tri : triplets)
-		//	std::cout << tri.a << " " << tri.b << " " << tri.c << endl;
-	}
+	vector<power_triplet_t> triplets = generate_power_triplets(100);
 
 	// Generate all combinations of 10 triplets and keep the
 	// combination that has the most pair-wise sums of powers
@@ -203,66 +312,6 @@ int main()
 	{
 		duration_t duration;
 
-		number_set_t best_number_set(number_set_size);
-		set<power_pair_t> best_number_set_pairs;
-
-		struct combiner_t
-		{
-			const vector<power_triplet_t>& triplets;
-			const size_t number_set_size;
-			const size_t first_indice;
-			number_set_t best_number_set;
-			set<power_pair_t> best_number_set_pairs;
-
-			combiner_t(const vector<power_triplet_t>& tris, size_t set_size, size_t first)
-				: triplets(tris)
-				, number_set_size(set_size)
-				, first_indice(first)
-				, best_number_set(set_size)
-			{}
-
-			void run()
-			{
-				// These are the indices of the triplets to combine.
-				vector<size_t> indices;
-				for (size_t i = 0; i < number_set_size; ++i)
-					indices.push_back(i + first_indice);
-
-				bool more_combinations = true;
-				while (more_combinations)
-				{
-					number_set_t number_set(number_set_size);
-					for (size_t i : indices)
-						number_set.add(triplets[i]);
-
-					const auto number_set_pairs = number_set.pairs();
-					if (number_set_pairs.size() > best_number_set_pairs.size())
-					{
-						best_number_set = number_set;
-						best_number_set_pairs = number_set_pairs;
-					}
-
-					// Generate the next set of indices of triplets. This is N choose K in maths.
-					// This is equal to N! / (K! x (N-K)!). Here N is the number of triplets we found
-					// and K is the desired size of the set of numbers.
-					more_combinations = false;
-					for (size_t which_indice = indices.size() - 1; which_indice > 0; which_indice--)
-					{
-						if (indices[which_indice] + 1 < triplets.size() - (indices.size() - which_indice - 1))
-						{
-							indices[which_indice] += 1;
-							for (size_t reset_indice = which_indice + 1; reset_indice < indices.size(); reset_indice++)
-							{
-								indices[reset_indice] = indices[reset_indice - 1] + 1;
-							}
-							more_combinations = true;
-							break;
-						}
-					}
-				}
-			}
-		};
-
 		vector<combiner_t> combiners;
 		const size_t first_indice_max = triplets.size() - number_set_size;
 		for (size_t first_indice = 0; first_indice <= first_indice_max; ++first_indice)
@@ -270,37 +319,9 @@ int main()
 			combiners.push_back(combiner_t(triplets, number_set_size, first_indice));
 		}
 
-		atomic<size_t> next_to_do = 0;
-		vector<thread*> threads;
+		const number_set_t best_number_set = run_combiners_in_threads(combiners);
+		const set<power_pair_t> best_number_set_pairs = best_number_set.pairs();
 
-		for (size_t i = 0; i < thread::hardware_concurrency(); ++i)
-		{
-			threads.push_back(new thread([&combiners, &next_to_do]()
-				{
-					while (true)
-					{
-						const size_t which = next_to_do.fetch_add(1);
-						if (which >= combiners.size())
-							break;
-						combiner_t& combiner = combiners[which];
-						combiner.run();
-					}
-				}));
-		}
-
-		for (size_t i = 0; i < thread::hardware_concurrency(); ++i)
-		{
-			threads[i]->join();
-		}
-
-		for (const combiner_t& combiner : combiners)
-		{
-			if (combiner.best_number_set_pairs.size() > best_number_set_pairs.size())
-			{
-				best_number_set = combiner.best_number_set;
-				best_number_set_pairs = combiner.best_number_set_pairs;
-			}
-		}
 		std::cout << number_set_size << " numbers in " << duration.elapsed() << ":";
 		for (const my_int_t number : best_number_set.numbers)
 			std::cout << " " << number;
