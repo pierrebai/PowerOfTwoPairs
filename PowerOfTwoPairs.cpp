@@ -243,79 +243,34 @@ struct number_set_t
 	}
 };
 
-// Generate a subset all combinations of triplets (i.e N choose K)
-// and keep the best resulting combination.
-// Hold its own state so that multiple can run in parallel in multiple
-
-struct combiner_t
+// Improve a number set, generating other number sets.
+// Keep only the best number set.
+struct improver_t
 {
-	const vector<power_triplet_t>& triplets;
-	const size_t number_set_size;
-	vector<size_t> preset_indices;
 	number_set_t best_number_set;
 	size_t best_pair_count = 0;
-	size_t combination_count = 0;
 	size_t improvement_count = 0;
 
+	improver_t(const size_t set_size) : best_number_set(set_size) {}
+
+	void improve(const number_set_t& number_set)
+	{
+		number_sets_to_improve.push_back(number_set);
+
+		while (number_sets_to_improve.size() > 0)
+		{
+			number_set_t number_set = number_sets_to_improve.back();
+			number_sets_to_improve.pop_back();
+			update_best_number_set(number_set);
+			improve_number_set(number_set);
+		}
+	}
+
+private:
 	vector<my_int_t> better_numbers;
 	vector<my_int_t> worst_numbers;
 	vector<number_set_t> number_sets_to_improve;
 	map<my_int_t, size_t> pair_count_per_numbers;
-
-	combiner_t(const vector<power_triplet_t>& tris, size_t set_size, vector<size_t> preset)
-		: triplets(tris)
-		, number_set_size(set_size)
-		, preset_indices(preset)
-		, best_number_set(set_size)
-	{}
-
-	void combine()
-	{
-		if (number_set_size <= 0)
-			return;
-
-		// These are the indices of the triplets to combine.
-		vector<size_t> indices;
-		if (preset_indices.size() > 0)
-			for (size_t preset : preset_indices)
-				indices.push_back(preset);
-		else
-			indices.push_back(0);
-		for (size_t i = indices.size(); i < number_set_size; ++i)
-			indices.push_back(indices[i-1]+1);
-
-		bool more_combinations = true;
-		number_set_t number_set(number_set_size);
-		while (more_combinations)
-		{
-			combination_count++;
-			number_set.reset();
-			for (size_t i : indices)
-				number_set.add(triplets[i]);
-
-			number_sets_to_improve.push_back(number_set);
-			improvement_count = 0;
-			improve();
-
-			// Generate the next set of indices of triplets. This is N choose K in maths.
-			// This is equal to N! / (K! x (N-K)!). Here N is the number of triplets we found
-			// and K is the desired size of the set of numbers.
-			more_combinations = false;
-			for (size_t which_indice = indices.size() - 1; which_indice != preset_indices.size() - 1; which_indice--)
-			{
-				if (indices[which_indice] + 1 < triplets.size() - (number_set_size - which_indice - 1))
-				{
-					indices[which_indice] += 1;
-					for (size_t reset_indice = which_indice + 1; reset_indice < indices.size(); reset_indice++)
-					{
-						indices[reset_indice] = indices[reset_indice - 1] + 1;
-					}
-					more_combinations = true;
-					break;
-				}
-			}
-		}
-	}
 
 	void update_best_number_set(const number_set_t& number_set)
 	{
@@ -324,17 +279,6 @@ struct combiner_t
 		{
 			best_number_set = number_set;
 			best_pair_count = pair_count;
-		}
-	}
-
-	void improve()
-	{
-		while (number_sets_to_improve.size() > 0)
-		{
-			number_set_t number_set = number_sets_to_improve.back();
-			number_sets_to_improve.pop_back();
-			update_best_number_set(number_set);
-			improve_number_set(number_set);
 		}
 	}
 
@@ -470,6 +414,73 @@ struct combiner_t
 	}
 };
 
+// Generate a subset all combinations of triplets (i.e N choose K)
+// and keep the best resulting combination.
+// Hold its own state so that multiple can run in parallel in multiple
+
+struct combiner_t
+{
+	const vector<power_triplet_t>& triplets;
+	const size_t number_set_size;
+	vector<size_t> preset_indices;
+	improver_t improver;
+	size_t combination_count = 0;
+
+	combiner_t(const vector<power_triplet_t>& tris, size_t set_size, vector<size_t> preset)
+		: triplets(tris)
+		, number_set_size(set_size)
+		, preset_indices(preset)
+		, improver(set_size)
+	{}
+
+	void combine()
+	{
+		if (number_set_size <= 0)
+			return;
+
+		// These are the indices of the triplets to combine.
+		vector<size_t> indices;
+		if (preset_indices.size() > 0)
+			for (size_t preset : preset_indices)
+				indices.push_back(preset);
+		else
+			indices.push_back(0);
+		for (size_t i = indices.size(); i < number_set_size; ++i)
+			indices.push_back(indices[i-1]+1);
+
+		bool more_combinations = true;
+		number_set_t number_set(number_set_size);
+		while (more_combinations)
+		{
+			combination_count++;
+			number_set.reset();
+			for (size_t i : indices)
+				number_set.add(triplets[i]);
+
+			improver.improve(number_set);
+
+			// Generate the next set of indices of triplets. This is N choose K in maths.
+			// This is equal to N! / (K! x (N-K)!). Here N is the number of triplets we found
+			// and K is the desired size of the set of numbers.
+			more_combinations = false;
+			for (size_t which_indice = indices.size() - 1; which_indice != preset_indices.size() - 1; which_indice--)
+			{
+				if (indices[which_indice] + 1 < triplets.size() - (number_set_size - which_indice - 1))
+				{
+					indices[which_indice] += 1;
+					for (size_t reset_indice = which_indice + 1; reset_indice < indices.size(); reset_indice++)
+					{
+						indices[reset_indice] = indices[reset_indice - 1] + 1;
+					}
+					more_combinations = true;
+					break;
+				}
+			}
+		}
+	}
+
+};
+
 vector<combiner_t> generate_combiners(const vector<power_triplet_t>& triplets, const size_t number_set_size, size_t levels)
 {
 	vector<combiner_t> combiners;
@@ -550,8 +561,8 @@ number_set_t run_combiners_in_threads(vector<combiner_t>& combiners)
 				size_t current_combiner_index = next_to_do.load();
 				for (size_t i = current_combiner_index - thread_count; i < current_combiner_index; ++i)
 				{
-					const size_t pair_count = combiners[i].best_pair_count;
-					const size_t improvement_count = combiners[i].improvement_count;
+					const size_t pair_count = combiners[i].improver.best_pair_count;
+					const size_t improvement_count = combiners[i].improver.improvement_count;
 					best_pair_count = std::max(best_pair_count, pair_count);
 					max_improvement_count = std::max(max_improvement_count, improvement_count);
 				}
@@ -594,10 +605,10 @@ number_set_t run_combiners_in_threads(vector<combiner_t>& combiners)
 	size_t best_pair_count = 0;
 	for (const combiner_t& combiner : combiners)
 	{
-		if (combiner.best_pair_count > best_pair_count)
+		if (combiner.improver.best_pair_count > best_pair_count)
 		{
-			best_number_set = combiner.best_number_set;
-			best_pair_count = combiner.best_pair_count;
+			best_number_set = combiner.improver.best_number_set;
+			best_pair_count = combiner.improver.best_pair_count;
 		}
 	}
 
