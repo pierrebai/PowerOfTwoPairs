@@ -201,70 +201,27 @@ struct number_set_t
 		}
 	}
 
-	void improve()
+	size_t count_pairs() const
 	{
-		vector<my_int_t> worst_numbers;
-		worst_numbers.reserve(desired_size);
-		map<my_int_t, size_t> pair_count_per_numbers;
-		while (_improve_once(pair_count_per_numbers, worst_numbers))
+		size_t count = 0;
+		const auto numbers_end = numbers.end();
+		const auto numbers_end_prev = prev(numbers_end);
+		for (auto i1 = numbers.begin(); i1 != numbers_end_prev; ++i1)
 		{
-			improvement_count += 1;
-		}
-	}
-
-	bool _improve_once(map<my_int_t, size_t>& pair_count_per_numbers, vector<my_int_t>& worst_numbers)
-	{
-		pair_count_per_numbers.clear();
-
-		for (const power_pair_t& pair : pairs())
-		{
-			pair_count_per_numbers[pair.a] += 1;
-			pair_count_per_numbers[pair.b] += 1;
-		}
-
-		size_t worst_pair_count = 1000000;
-		for (const auto& [number, count] : pair_count_per_numbers)
-		{
-			if (count < worst_pair_count)
+			for (auto i2 = next(i1); i2 != numbers_end; ++i2)
 			{
-				worst_numbers.resize(0);
-				worst_numbers.push_back(number);
-				worst_pair_count = count;
-			}
-			else if (count == worst_pair_count)
-			{
-				worst_numbers.push_back(number);
-			}
-		}
-
-		for (const my_int_t power : powers_of_two)
-		{
-			for (const my_int_t number : numbers)
-			{
-				const my_int_t maybe_number = power - number;
-				if (numbers.contains(maybe_number))
+				const my_int_t n1 = *i1;
+				const my_int_t n2 = *i2;
+				if (!is_power_of_two(n1 + n2))
 					continue;
 
-				for (const my_int_t worst_number : worst_numbers)
-				{
-					size_t maybe_pair_count = 0;
-					for (const my_int_t number : numbers)
-						if (number != worst_number && is_power_of_two(number + maybe_number))
-							maybe_pair_count += 1;
-
-					if (maybe_pair_count > worst_pair_count)
-					{
-						numbers.erase(worst_number);
-						numbers.insert(maybe_number);
-						return true;
-					}
-				}
+				count += 1;
 			}
 		}
-		return false;
+		return count;
 	}
 
-	vector<power_pair_t> pairs() const
+	vector<power_pair_t> generate_pairs() const
 	{
 		vector<power_pair_t> pairs;
 		pairs.reserve(desired_size * 3);
@@ -280,11 +237,8 @@ struct number_set_t
 					continue;
 
 				pairs.emplace_back(n1, n2);
-				}
 			}
-		//sort(pairs.begin(), pairs.end());
-		//auto new_end = unique(pairs.begin(), pairs.end());
-		//pairs.erase(new_end, pairs.end());
+		}
 		return pairs;
 	}
 };
@@ -299,8 +253,14 @@ struct combiner_t
 	const size_t number_set_size;
 	vector<size_t> preset_indices;
 	number_set_t best_number_set;
-	vector<power_pair_t> best_number_set_pairs;
+	size_t best_pair_count = 0;
 	size_t combination_count = 0;
+	size_t improvement_count = 0;
+
+	vector<my_int_t> better_numbers;
+	vector<my_int_t> worst_numbers;
+	vector<number_set_t> number_sets_to_improve;
+	map<my_int_t, size_t> pair_count_per_numbers;
 
 	combiner_t(const vector<power_triplet_t>& tris, size_t set_size, vector<size_t> preset)
 		: triplets(tris)
@@ -333,14 +293,9 @@ struct combiner_t
 			for (size_t i : indices)
 				number_set.add(triplets[i]);
 
-			number_set.improve();
-
-			const auto number_set_pairs = number_set.pairs();
-			if (number_set_pairs.size() > best_number_set_pairs.size())
-			{
-				best_number_set = number_set;
-				best_number_set_pairs = number_set_pairs;
-			}
+			number_sets_to_improve.push_back(number_set);
+			improvement_count = 0;
+			improve();
 
 			// Generate the next set of indices of triplets. This is N choose K in maths.
 			// This is equal to N! / (K! x (N-K)!). Here N is the number of triplets we found
@@ -357,6 +312,158 @@ struct combiner_t
 					}
 					more_combinations = true;
 					break;
+				}
+			}
+		}
+	}
+
+	void update_best_number_set(const number_set_t& number_set)
+	{
+		const auto pair_count = number_set.count_pairs();
+		if (pair_count > best_pair_count)
+		{
+			best_number_set = number_set;
+			best_pair_count = pair_count;
+		}
+	}
+
+	void improve()
+	{
+		while (number_sets_to_improve.size() > 0)
+		{
+			number_set_t number_set = number_sets_to_improve.back();
+			number_sets_to_improve.pop_back();
+			update_best_number_set(number_set);
+			improve_number_set(number_set);
+		}
+	}
+
+	void new_improve_number_set(const number_set_t& number_set)
+	{
+		// Find best numbers to add to the set.
+		pair_count_per_numbers.clear();
+		for (const my_int_t power : powers_of_two)
+		{
+			for (const my_int_t number : number_set.numbers)
+			{
+				const my_int_t maybe_number = power - number;
+				pair_count_per_numbers[maybe_number] += 1;
+			}
+		}
+
+		size_t better_pair_count = 0;
+		for (const auto& [number, count] : pair_count_per_numbers)
+		{
+			if (number_set.numbers.contains(number))
+				continue;
+
+			if (count > better_pair_count)
+			{
+				better_numbers.resize(0);
+				better_numbers.push_back(number);
+				better_pair_count = count;
+			}
+			else if (count == better_pair_count)
+			{
+				better_numbers.push_back(number);
+			}
+		}
+
+		// Find worst current numbers to replace.
+		pair_count_per_numbers.clear();
+		for (const power_pair_t& pair : number_set.generate_pairs())
+		{
+			pair_count_per_numbers[pair.a] += 1;
+			pair_count_per_numbers[pair.b] += 1;
+		}
+
+		size_t worst_pair_count = 1000000;
+		for (const auto& [number, count] : pair_count_per_numbers)
+		{
+			if (count < worst_pair_count)
+			{
+				worst_numbers.resize(0);
+				worst_numbers.push_back(number);
+				worst_pair_count = count;
+			}
+			else if (count == worst_pair_count)
+			{
+				worst_numbers.push_back(number);
+			}
+		}
+
+		// Verify if the best is better than the worst.
+		if (better_pair_count <= worst_pair_count)
+			return;
+
+		const size_t pair_count = number_set.count_pairs();
+		for (const my_int_t better_number : better_numbers)
+		{
+			for (const my_int_t worst_number : worst_numbers)
+			{
+				number_set_t improved(number_set);
+				improved.numbers.erase(worst_number);
+				improved.numbers.insert(better_number);
+				if (improved.count_pairs() > pair_count)
+				{
+					improved.improvement_count += 1;
+					improvement_count += 1;
+					number_sets_to_improve.emplace_back(move(improved));
+				}
+			}
+		}
+	}
+
+	void improve_number_set(const number_set_t& number_set)
+	{
+		pair_count_per_numbers.clear();
+
+		for (const power_pair_t& pair : number_set.generate_pairs())
+		{
+			pair_count_per_numbers[pair.a] += 1;
+			pair_count_per_numbers[pair.b] += 1;
+		}
+
+		size_t worst_pair_count = 1000000;
+		for (const auto& [number, count] : pair_count_per_numbers)
+		{
+			if (count < worst_pair_count)
+			{
+				worst_numbers.resize(0);
+				worst_numbers.push_back(number);
+				worst_pair_count = count;
+			}
+			else if (count == worst_pair_count)
+			{
+				worst_numbers.push_back(number);
+			}
+		}
+
+		for (const my_int_t power : powers_of_two)
+		{
+			for (const my_int_t number : number_set.numbers)
+			{
+				const my_int_t maybe_number = power - number;
+				if (number_set.numbers.contains(maybe_number))
+					continue;
+
+				for (const my_int_t worst_number : worst_numbers)
+				{
+					size_t maybe_pair_count = 0;
+					for (const my_int_t number : number_set.numbers)
+						if (number != worst_number && is_power_of_two(number + maybe_number))
+							maybe_pair_count += 1;
+
+					if (maybe_pair_count > worst_pair_count)
+					{
+						number_set_t improved(number_set);
+						improved.numbers.erase(worst_number);
+						improved.numbers.insert(maybe_number);
+						improved.improvement_count += 1;
+						improvement_count += 1;
+						number_sets_to_improve.emplace_back(move(improved));
+						return;
+					}
 				}
 			}
 		}
@@ -414,6 +521,7 @@ number_set_t run_combiners_in_threads(vector<combiner_t>& combiners)
 
 	// Search number sets.
 	for (size_t i = 0; i < thread::hardware_concurrency() - 1; ++i)
+	//for (size_t i = 0; i < 1; ++i)
 	{
 		threads.push_back(new thread([&combiners, &next_to_do]()
 			{
@@ -432,15 +540,27 @@ number_set_t run_combiners_in_threads(vector<combiner_t>& combiners)
 	threads.push_back(new thread([&combiners, &next_to_do]()
 		{
 			size_t current_percent = 0;
+			const size_t thread_count = thread::hardware_concurrency();
+			size_t best_pair_count = 0;
+			size_t max_improvement_count = 0;
 			duration_t duration;
 
-			auto print_progress = [&duration](size_t percent)
+			auto print_progress = [&combiners, &next_to_do, &thread_count, &duration, &best_pair_count, &max_improvement_count](size_t percent)
 			{
-				std::cout << setw(3) << percent << "% " << setw(5) << duration.elapsed() << "\r";
+				size_t current_combiner_index = next_to_do.load();
+				for (size_t i = current_combiner_index - thread_count; i < current_combiner_index; ++i)
+				{
+					const size_t pair_count = combiners[i].best_pair_count;
+					const size_t improvement_count = combiners[i].improvement_count;
+					best_pair_count = std::max(best_pair_count, pair_count);
+					max_improvement_count = std::max(max_improvement_count, improvement_count);
+				}
+				std::cout << setw(3) << percent << "% " << setw(5) << duration.elapsed() << " " << best_pair_count << " pairs " << max_improvement_count << " improvements\r";
 			};
 
 			while (true)
 			{
+				size_t skip_count = 0;
 				this_thread::sleep_for(chrono::milliseconds(100));
 				const size_t which = next_to_do.load();
 				if (which >= combiners.size())
@@ -450,7 +570,12 @@ number_set_t run_combiners_in_threads(vector<combiner_t>& combiners)
 				}
 				const size_t percent = 100 * which / combiners.size();
 				if (percent == current_percent)
-					continue;
+				{
+					skip_count += 1;
+					if (skip_count < 20)
+						continue;
+					skip_count = 0;
+				}
 				current_percent = percent;
 				print_progress(percent);
 				std::cout.flush();
@@ -466,13 +591,13 @@ number_set_t run_combiners_in_threads(vector<combiner_t>& combiners)
 	}
 
 	number_set_t best_number_set(combiners[0].number_set_size);
-	vector<power_pair_t> best_number_set_pairs;
+	size_t best_pair_count = 0;
 	for (const combiner_t& combiner : combiners)
 	{
-		if (combiner.best_number_set_pairs.size() > best_number_set_pairs.size())
+		if (combiner.best_pair_count > best_pair_count)
 		{
 			best_number_set = combiner.best_number_set;
-			best_number_set_pairs = combiner.best_number_set_pairs;
+			best_pair_count = combiner.best_pair_count;
 		}
 	}
 
@@ -491,7 +616,7 @@ number_set_t simple_algo(size_t number_set_size)
 			if (delta > min_delta_for_negative)
 				number_set.add(-delta + 2);
 		}
-		if (number_set.pairs().size() > best_number_set.pairs().size())
+		if (number_set.count_pairs() > best_number_set.count_pairs())
 			best_number_set = number_set;
 	}
 	return best_number_set;
@@ -504,7 +629,7 @@ void print_result(const duration_t& duration, const number_set_t& number_set)
 		std::cout << " " << number;
 	std::cout << endl;
 
-	const vector<power_pair_t> pairs = number_set.pairs();
+	const vector<power_pair_t> pairs = number_set.generate_pairs();
 	std::cout << pairs.size() << " powers pairs:";
 	for (const auto& pair : pairs)
 		std::cout << " " << pair.a << "+" << pair.b << "=" << pair.sum();
