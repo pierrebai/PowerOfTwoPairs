@@ -97,15 +97,15 @@ struct duration_t
 
 
 // Set of powers of two, for quick check that a sum is such a power.
-unordered_set<my_int_t> gen_powers_of_two()
+unordered_set<my_int_t> gen_powers_of_two(const my_int_t max_power)
 {
 	unordered_set<my_int_t> p2;
-	for (my_int_t pow = 0; pow < 10; ++pow)
+	for (my_int_t pow = 0; pow <= max_power; ++pow)
 		p2.insert(my_int_t(1) << pow);
 	return p2;
 }
 
-const unordered_set<my_int_t> powers_of_two = gen_powers_of_two();
+unordered_set<my_int_t> powers_of_two;
 
 bool is_power_of_two(my_int_t number) { return number != 0 && (number & (number - 1)) == 0; }
 
@@ -664,6 +664,9 @@ int main(int argc, char** argv)
 	const size_t combiner_levels = use_simplified_algo ? 0 : std::atoi(argv[2]);
 	const size_t min_set_size = use_simplified_algo ? std::atoi(argv[1]) : std::atoi(argv[3]);
 	const size_t max_set_size = simple_range ? min_set_size : use_simplified_algo ? std::atoi(argv[2]) : std::atoi(argv[4]);
+
+	const my_int_t max_power_of_two = max_set_size < 200 ? 9 : max_set_size < 1000 ? 12 : 20;
+	powers_of_two = gen_powers_of_two(max_power_of_two);
 
 	for (size_t number_set_size = min_set_size; number_set_size <= max_set_size; ++number_set_size)
 	{
