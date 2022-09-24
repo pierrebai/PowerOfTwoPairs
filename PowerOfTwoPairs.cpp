@@ -1,12 +1,13 @@
-#include <iostream>
-#include <compare>
-#include <vector>
-#include <map>
-#include <set>
-#include <unordered_set>
 #include <algorithm>
 #include <chrono>
+#include <compare>
+#include <iostream>
+#include <map>
+#include <set>
 #include <thread>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
 using namespace std;
 
@@ -96,15 +97,17 @@ struct duration_t
 
 
 // Set of powers of two, for quick check that a sum is such a power.
-set<my_int_t> gen_powers_of_two()
+unordered_set<my_int_t> gen_powers_of_two()
 {
-	set<my_int_t> p2;
+	unordered_set<my_int_t> p2;
 	for (my_int_t pow = 0; pow < 10; ++pow)
 		p2.insert(my_int_t(1) << pow);
 	return p2;
 }
 
-const set<my_int_t> powers_of_two = gen_powers_of_two();
+const unordered_set<my_int_t> powers_of_two = gen_powers_of_two();
+
+bool is_power_of_two(my_int_t number) { return number != 0 && (number & (number - 1)) == 0; }
 
 // Generate triplets of numbers all pair-wise summing to powers of two.
 vector<power_triplet_t> generate_power_triplets(const size_t triplet_count)
@@ -132,7 +135,7 @@ vector<power_triplet_t> generate_power_triplets(const size_t triplet_count)
 					if (k == 0 || k == i || k == j)
 						continue;
 
-					if (powers_of_two.count(i + k) && powers_of_two.count(j + k))
+					if (is_power_of_two(i + k) && is_power_of_two(j + k))
 					{
 						triplet_set.emplace(i, j, k);
 					}
@@ -200,24 +203,25 @@ struct number_set_t
 
 	void improve()
 	{
-		while (improve_once())
+		vector<my_int_t> worst_numbers;
+		worst_numbers.reserve(desired_size);
+		map<my_int_t, size_t> pair_count_per_numbers;
+		while (_improve_once(pair_count_per_numbers, worst_numbers))
 		{
 			improvement_count += 1;
 		}
 	}
 
-	bool improve_once()
+	bool _improve_once(map<my_int_t, size_t>& pair_count_per_numbers, vector<my_int_t>& worst_numbers)
 	{
-		const set<power_pair_t> current_pairs = pairs();
-		map<my_int_t, size_t> pair_count_per_numbers;
+		pair_count_per_numbers.clear();
 
-		for (const power_pair_t& pair : current_pairs)
+		for (const power_pair_t& pair : pairs())
 		{
 			pair_count_per_numbers[pair.a] += 1;
 			pair_count_per_numbers[pair.b] += 1;
 		}
 
-		vector<my_int_t> worst_numbers;
 		size_t worst_pair_count = 1000000;
 		for (const auto& [number, count] : pair_count_per_numbers)
 		{
@@ -245,7 +249,7 @@ struct number_set_t
 				{
 					size_t maybe_pair_count = 0;
 					for (const my_int_t number : numbers)
-						if (number != worst_number && powers_of_two.contains(number + maybe_number))
+						if (number != worst_number && is_power_of_two(number + maybe_number))
 							maybe_pair_count += 1;
 
 					if (maybe_pair_count > worst_pair_count)
@@ -260,54 +264,27 @@ struct number_set_t
 		return false;
 	}
 
-	bool slower_improve_once()
+	vector<power_pair_t> pairs() const
 	{
-		const set<power_pair_t> current_pairs = pairs();
-		number_set_t maybe_set(*this);
-		for (const my_int_t number : numbers)
+		vector<power_pair_t> pairs;
+		pairs.reserve(desired_size * 3);
+		const auto numbers_end = numbers.end();
+		const auto numbers_end_prev = prev(numbers_end);
+		for (auto i1 = numbers.begin(); i1 != numbers_end_prev; ++ i1)
 		{
-			for (const my_int_t power : powers_of_two)
+			for (auto i2 = next(i1); i2 != numbers_end; ++i2)
 			{
-				const my_int_t maybe_number = power - number;
-				if (numbers.contains(maybe_number))
+				const my_int_t n1 = *i1;
+				const my_int_t n2 = *i2;
+				if (!is_power_of_two(n1 + n2))
 					continue;
 
-				for (const my_int_t replaced_number : numbers)
-				{
-					if (replaced_number == number)
-						continue;
-					maybe_set.numbers.erase(replaced_number);
-					maybe_set.numbers.insert(maybe_number);
-					const auto maybe_pairs = maybe_set.pairs();
-					if (maybe_pairs.size() > current_pairs.size())
-					{
-						maybe_set.numbers.swap(numbers);
-						return true;
-					}
-					maybe_set.numbers.erase(maybe_number);
-					maybe_set.numbers.insert(replaced_number);
+				pairs.emplace_back(n1, n2);
 				}
 			}
-		}
-		return false;
-	}
-
-	set<power_pair_t> pairs() const
-	{
-		set<power_pair_t> pairs;
-		for (const my_int_t n1 : numbers)
-		{
-			for (const my_int_t n2 : numbers)
-			{
-				if (n1 == n2)
-					continue;
-
-				if (!powers_of_two.contains(n1 + n2))
-					continue;
-
-				pairs.emplace(n1, n2);
-			}
-		}
+		//sort(pairs.begin(), pairs.end());
+		//auto new_end = unique(pairs.begin(), pairs.end());
+		//pairs.erase(new_end, pairs.end());
 		return pairs;
 	}
 };
@@ -322,7 +299,7 @@ struct combiner_t
 	const size_t number_set_size;
 	vector<size_t> preset_indices;
 	number_set_t best_number_set;
-	set<power_pair_t> best_number_set_pairs;
+	vector<power_pair_t> best_number_set_pairs;
 	size_t combination_count = 0;
 
 	combiner_t(const vector<power_triplet_t>& tris, size_t set_size, vector<size_t> preset)
@@ -489,7 +466,7 @@ number_set_t run_combiners_in_threads(vector<combiner_t>& combiners)
 	}
 
 	number_set_t best_number_set(combiners[0].number_set_size);
-	set<power_pair_t> best_number_set_pairs;
+	vector<power_pair_t> best_number_set_pairs;
 	for (const combiner_t& combiner : combiners)
 	{
 		if (combiner.best_number_set_pairs.size() > best_number_set_pairs.size())
@@ -527,7 +504,7 @@ void print_result(const duration_t& duration, const number_set_t& number_set)
 		std::cout << " " << number;
 	std::cout << endl;
 
-	const set<power_pair_t> pairs = number_set.pairs();
+	const vector<power_pair_t> pairs = number_set.pairs();
 	std::cout << pairs.size() << " powers pairs:";
 	for (const auto& pair : pairs)
 		std::cout << " " << pair.a << "+" << pair.b << "=" << pair.sum();
@@ -559,24 +536,24 @@ int main(int argc, char** argv)
 	}
 	else
 	{
-		// Generate triplets of numbers all pair-wise summing to powers of two.
-		vector<power_triplet_t> triplets = generate_power_triplets(triplet_count);
+	// Generate triplets of numbers all pair-wise summing to powers of two.
+	vector<power_triplet_t> triplets = generate_power_triplets(triplet_count);
 
-		// Generate all combinations of 10 triplets and keep the
-		// combination that has the most pair-wise sums of powers
-		// of two.
-		for (size_t number_set_size = min_set_size; number_set_size <= max_set_size; ++number_set_size)
-		{
-			duration_t duration;
+	// Generate all combinations of 10 triplets and keep the
+	// combination that has the most pair-wise sums of powers
+	// of two.
+	for (size_t number_set_size = min_set_size; number_set_size <= max_set_size; ++number_set_size)
+	{
+		duration_t duration;
 
-			vector<combiner_t> combiners = generate_combiners(triplets, number_set_size, combiner_levels);
-			std::cout << "Using " << combiners.size() << " combiners." << endl;
+		vector<combiner_t> combiners = generate_combiners(triplets, number_set_size, combiner_levels);
+		std::cout << "Using " << combiners.size() << " combiners." << endl;
 
 			const number_set_t number_set = run_combiners_in_threads(combiners);
 
-			size_t total_combination_count = 0;
-			for (const auto& combiner : combiners)
-				total_combination_count += combiner.combination_count;
+		size_t total_combination_count = 0;
+		for (const auto& combiner : combiners)
+			total_combination_count += combiner.combination_count;
 
 			std::cout << "Tried " << total_combination_count << " combinations with " << number_set.improvement_count << " improvements." << endl;
 
