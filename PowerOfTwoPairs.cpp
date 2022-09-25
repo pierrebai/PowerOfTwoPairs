@@ -1,9 +1,11 @@
 #include <algorithm>
 #include <chrono>
 #include <compare>
+#include <exception>
 #include <iostream>
 #include <map>
 #include <set>
+#include <sstream>
 #include <thread>
 #include <unordered_set>
 #include <utility>
@@ -13,6 +15,169 @@ using namespace std;
 
 // Allow changing integer types in case we ever get to use large powers of two.
 using my_int_t = int64_t;
+
+// Parameters of the program.
+struct parameters_t
+{
+	bool use_simplified_algo = false;
+	size_t min_set_size = 5;
+	size_t max_set_size = 5;
+	size_t triplet_count = 20;
+	size_t combiner_levels = 5;
+	my_int_t max_power_of_two = 9;
+
+	parameters_t()
+	{
+		validate();
+	}
+
+	void validate()
+	{
+		min_set_size = std::max(min_set_size, size_t(3));
+		max_set_size = std::max(max_set_size, min_set_size);
+		triplet_count = std::max(triplet_count, min_set_size / 2);
+		triplet_count = std::max(triplet_count, size_t(5));
+		combiner_levels = std::max(combiner_levels, size_t(2));
+		max_power_of_two = std::max(max_power_of_two, my_int_t(5));
+	}
+};
+
+// Description of one parameter.
+struct parameter_t
+{
+	string name;
+	string short_option;
+	string long_option;
+	size_t parameters_t::* count;
+	my_int_t parameters_t::* number;
+	bool parameters_t::* flag;
+
+	bool is_flag() const { return flag != nullptr; }
+	bool is_count() const { return count != nullptr; }
+	bool is_number() const { return number != nullptr; }
+};
+
+// Parser for command-line parameters.
+struct parameters_parser_t
+{
+	parameters_t parse(const vector<parameter_t>& params, const int argc, const char** argv)
+	{
+		all_params = params;
+		return parse_arguments(argc, argv);
+	}
+
+private:
+	vector<parameter_t> all_params;
+
+	void report_help(const char* program_name)
+	{
+		ostringstream ostr;
+		ostr << "Parameters:" << endl;
+		for (const parameter_t& param : all_params)
+		{
+			ostr
+				<< "   -" << param.short_option
+				<< " or --" << param.long_option
+				<< (param.is_flag() ? " [0 or 1]: " : " [value]: ")
+				<< param.name << endl;
+		}
+		throw runtime_error(ostr.str());
+	}
+
+	void report_missing_argument(const char* program_name, const string& arg)
+	{
+		report_parse_error(program_name, string("Missing argument for ") + arg);
+	}
+
+	void report_unknown_parameter(const char* program_name, const string& arg)
+	{
+		report_parse_error(program_name, string("Unknown parameter given: ") + arg);
+	}
+
+	void report_parse_error(const char* program_name, const string& message)
+	{
+		ostringstream ostr;
+		ostr << "Error: " << message << endl;
+		throw runtime_error(ostr.str());
+	}
+
+	parameters_t parse_arguments(const int argc, const char** argv)
+	{
+		parameters_t params;
+
+		const char* const program_name = argc >= 1 ? argv[0] : "PowerOfTwoPairs";
+
+		size_t current_implicit_param = 0;
+
+		auto find_param = [&](const std::string& arg, int& arg_index) -> parameter_t*
+		{
+			if (arg.starts_with("--"))
+			{
+				if (arg == "--help")
+					report_help(program_name);
+
+				for (parameter_t& param : all_params)
+				{
+					if (arg.substr(2) == param.long_option)
+					{
+						arg_index += 1;
+						return &param;
+					}
+				}
+				return nullptr;
+			}
+			else if (arg.starts_with("-"))
+			{
+				if (arg == "-h")
+					report_help(program_name);
+
+				for (parameter_t& param : all_params)
+				{
+					if (arg.substr(1) == param.short_option)
+					{
+						arg_index += 1;
+						return &param;
+					}
+				}
+				return nullptr;
+			}
+			else
+			{
+				return nullptr;
+			}
+		};
+
+		for (int arg_index = 1; arg_index < argc; ++arg_index)
+		{
+			string arg = argv[arg_index];
+			parameter_t* to_parse = find_param(arg, arg_index);
+			if (arg_index >= argc)
+				report_missing_argument(program_name, arg);
+			else if (to_parse == nullptr)
+				report_unknown_parameter(program_name, arg);
+			else if (to_parse->is_number())
+				(params.*to_parse->number) = my_int_t(atoi(argv[arg_index]));
+			else if (to_parse->is_count())
+				(params.*to_parse->count) = size_t(atoi(argv[arg_index]));
+			else if (to_parse->is_flag())
+				(params.*to_parse->flag) = atoi(argv[arg_index]) != 0;
+		}
+
+		params.validate();
+		return params;
+	}
+};
+
+// Concrete list of parameters.
+vector<parameter_t> all_params =
+{
+	{ "use simpler algorithm",   "s", "simplified", nullptr, nullptr, &parameters_t::use_simplified_algo },
+	{ "number of triplets",		 "t", "triplets",	&parameters_t::triplet_count, nullptr, nullptr		 },
+	{ "combiner levels",		 "c", "levels",	    &parameters_t::combiner_levels, nullptr, nullptr	 },
+	{ "minimum number-set size", "m", "min",		&parameters_t::min_set_size, nullptr, nullptr		 },
+	{ "maximum number-set size", "x", "max",		&parameters_t::max_set_size, nullptr, nullptr		 },
+	{ "number of powers of two", "p", "powers",	    nullptr, &parameters_t::max_power_of_two, nullptr	 },
+};
 
 // Pair of numbers summing to a power of two.
 // Can be compared and thus used in sets, etc.
@@ -648,61 +813,54 @@ void print_result(const duration_t& duration, const number_set_t& number_set)
 }
 
 // Actual algorithm to find good number sets.
-int main(int argc, char** argv)
+int main(int argc, const char** argv)
 {
-	if (argc < 2)
+	try
 	{
-		cerr << "Missing arguments." << endl;
-		cerr << "Searching  Algo Usage: " << (argc >= 1 ? argv[0] : "PowerOfTwoPairs") << " delta combiner-level min-set-size max-set-size" << endl;
-		cerr << "Simplified Algo Usage: " << (argc >= 1 ? argv[0] : "PowerOfTwoPairs") << " set-size" << endl;
+		const parameters_t params = parameters_parser_t().parse(all_params, argc, argv);
+		powers_of_two = gen_powers_of_two(params.max_power_of_two);
+
+		for (size_t number_set_size = params.min_set_size; number_set_size <= params.max_set_size; ++number_set_size)
+		{
+			duration_t duration;
+
+			if (params.use_simplified_algo)
+			{
+				number_set_t number_set = simple_algo(number_set_size);
+				improver_t improver(number_set_size);
+				improver.improve(number_set);
+				print_result(duration, improver.best_number_set);
+			}
+			else
+			{
+				// Generate triplets of numbers all pair-wise summing to powers of two.
+				vector<power_triplet_t> triplets = generate_power_triplets(params.triplet_count);
+
+				// Generate all combinations of 10 triplets and keep the
+				// combination that has the most pair-wise sums of powers
+				// of two.
+
+				vector<combiner_t> combiners = generate_combiners(triplets, number_set_size, params.combiner_levels);
+				std::cout << "Using " << combiners.size() << " combiners." << endl;
+
+				const number_set_t number_set = run_combiners_in_threads(combiners);
+
+				size_t total_combination_count = 0;
+				for (const auto& combiner : combiners)
+					total_combination_count += combiner.combination_count;
+
+				std::cout << "Tried " << total_combination_count << " combinations with " << number_set.improvement_count << " improvements." << endl;
+
+				print_result(duration, number_set);
+			}
+		}
+
+
+		return 0;
+	}
+	catch (const exception& ex)
+	{
+		cerr << ex.what() << endl;
 		return 1;
 	}
-
-	const bool use_simplified_algo = argc <= 3;
-	const bool simple_range = (argc == 4 || argc == 2);
-	const size_t triplet_count = use_simplified_algo ? 0 : std::atoi(argv[1]);
-	const size_t combiner_levels = use_simplified_algo ? 0 : std::atoi(argv[2]);
-	const size_t min_set_size = use_simplified_algo ? std::atoi(argv[1]) : std::atoi(argv[3]);
-	const size_t max_set_size = simple_range ? min_set_size : use_simplified_algo ? std::atoi(argv[2]) : std::atoi(argv[4]);
-
-	const my_int_t max_power_of_two = max_set_size < 200 ? 9 : max_set_size < 1000 ? 12 : 20;
-	powers_of_two = gen_powers_of_two(max_power_of_two);
-
-	for (size_t number_set_size = min_set_size; number_set_size <= max_set_size; ++number_set_size)
-	{
-		duration_t duration;
-
-		if (use_simplified_algo)
-		{
-			number_set_t number_set = simple_algo(number_set_size);
-			improver_t improver(number_set_size);
-			improver.improve(number_set);
-			print_result(duration, improver.best_number_set);
-		}
-		else
-		{
-			// Generate triplets of numbers all pair-wise summing to powers of two.
-			vector<power_triplet_t> triplets = generate_power_triplets(triplet_count);
-
-			// Generate all combinations of 10 triplets and keep the
-			// combination that has the most pair-wise sums of powers
-			// of two.
-
-			vector<combiner_t> combiners = generate_combiners(triplets, number_set_size, combiner_levels);
-			std::cout << "Using " << combiners.size() << " combiners." << endl;
-
-			const number_set_t number_set = run_combiners_in_threads(combiners);
-
-			size_t total_combination_count = 0;
-			for (const auto& combiner : combiners)
-				total_combination_count += combiner.combination_count;
-
-			std::cout << "Tried " << total_combination_count << " combinations with " << number_set.improvement_count << " improvements." << endl;
-
-			print_result(duration, number_set);
-		}
-	}
-
-
-	return 0;
 }
